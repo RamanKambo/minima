@@ -6,12 +6,10 @@ from pydantic import BaseModel
 from async_queue import AsyncQueue
 from fastapi import FastAPI, APIRouter
 from contextlib import asynccontextmanager
-from async_loop import index_loop, crawl_loop
+from typing import List
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-START_INDEXING = os.environ.get('START_INDEXING', 'false').lower() == 'true'
 
 indexer = Indexer()
 async_queue = AsyncQueue()
@@ -25,11 +23,10 @@ class Query(BaseModel):
     response_description='Query local data storage',
 )
 async def query(request: Query):
-    logger.info(f"Received query: {query}")
+    logger.info(f"Received query: {request.query}")
     try:
         result = indexer.find(request.query)
-        logger.info(f"Found {len(result)} results for query: {query}")
-        logger.info(f"Results: {result}")
+        logger.info(f"Found results for query: {request.query}")
         return {"result": result}
     except Exception as e:
         logger.error(f"Error in processing query: {e}")
@@ -43,29 +40,69 @@ async def embedding(request: Query):
     logger.info(f"Received embedding request: {request}")
     try:
         result = indexer.embed(request.query)
-        logger.info(f"Found {len(result)} results for query: {request.query}")
+        logger.info(f"Generated embedding for query: {request.query}")
         return {"result": result}
     except Exception as e:
         logger.error(f"Error in processing embedding: {e}")
-        return {"error": str(e)}    
+        return {"error": str(e)}
+
+async def crawl_loop(queue: AsyncQueue):
+    """Continuously scan for files that need indexing"""
+    while True:
+        try:
+            # Get list of files that need indexing
+            files_to_index = indexer.get_files_to_index()
+            
+            # Queue them for indexing
+            for file_path in files_to_index:
+                await queue.put({
+                    "path": file_path
+                })
+                logger.info(f"Queued file for indexing: {file_path}")
+            
+            # Wait before next scan
+            await asyncio.sleep(300)  # 5 minutes
+            
+        except Exception as e:
+            logger.error(f"Error in crawl loop: {e}")
+            await asyncio.sleep(60)  # Wait a minute before retrying after error
+
+async def index_loop(queue: AsyncQueue, indexer: Indexer):
+    """Process files from the queue and index them"""
+    while True:
+        try:
+            # Get next file from queue
+            message = await queue.get()
+            
+            # Process the file
+            indexer.index(message)
+            
+            # Mark task as done
+            queue.task_done()
+            
+        except asyncio.CancelledError:
+            logger.info("Index loop cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in index loop: {e}")
+            await asyncio.sleep(5)  # Brief pause before continuing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = []
-    logger.info(f"Start indexing: {START_INDEXING}")
+    # Always start the indexing tasks - no more START_INDEXING flag
+    tasks = [
+        asyncio.create_task(crawl_loop(async_queue)),
+        asyncio.create_task(index_loop(async_queue, indexer))
+    ]
+    
     try:
-        if START_INDEXING:
-            tasks.extend([
-                asyncio.create_task(crawl_loop(async_queue)),
-                asyncio.create_task(index_loop(async_queue, indexer))
-            ])
         yield
     finally:
+        # Cleanup on shutdown
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-
 
 def create_app() -> FastAPI:
     app = FastAPI(

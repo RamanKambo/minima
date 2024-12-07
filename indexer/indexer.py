@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Set, Dict, Optional
 from pathlib import Path
+from datetime import datetime
 
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
@@ -20,6 +21,9 @@ from langchain_community.document_loaders import (
     PyMuPDFLoader,
 )
 
+from .indexing_types import IndexingStatus
+from .index_status_tracker import IndexStatusTracker
+from .file_discovery_service import FileDiscoveryService
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +45,6 @@ class Config:
         "cpu"
     )
     
-    START_INDEXING = os.environ.get("START_INDEXING")
     LOCAL_FILES_PATH = os.environ.get("LOCAL_FILES_PATH")
     CONTAINER_PATH = "/usr/src/app/local_files/"
     QDRANT_COLLECTION = "mnm_storage"
@@ -52,6 +55,7 @@ class Config:
     CHUNK_SIZE = 500
     CHUNK_OVERLAP = 200
 
+
 class Indexer:
     def __init__(self):
         self.config = Config()
@@ -59,6 +63,14 @@ class Indexer:
         self.embed_model = self._initialize_embeddings()
         self.document_store = self._setup_collection()
         self.text_splitter = self._initialize_text_splitter()
+        
+        # Initialize status tracking
+        self.status_tracker = IndexStatusTracker()
+        self.file_discovery = FileDiscoveryService(
+            status_tracker=self.status_tracker,
+            supported_extensions=set(self.config.EXTENSIONS_TO_LOADERS.keys()),
+            base_directory=self.config.LOCAL_FILES_PATH
+        )
 
     def _initialize_qdrant(self) -> QdrantClient:
         return QdrantClient(host=self.config.QDRANT_BOOTSTRAP)
@@ -120,17 +132,45 @@ class Indexer:
             logger.error(f"Error processing file {loader.file_path}: {str(e)}")
             return []
 
+    def get_files_to_index(self) -> List[str]:
+        """Get list of files that need indexing"""
+        files_to_index = self.file_discovery.scan_directory()
+        return [f.relative_path for f in files_to_index]
+
     def index(self, message: Dict[str, str]) -> None:
-        path, file_id = message["path"], message["file_id"]
-        logger.info(f"Processing file: {path} (ID: {file_id})")
+        path = message["path"]
+        logger.info(f"Processing file: {path}")
         
         try:
+            # Update status to RUNNING
+            self.status_tracker.update_file_status(path, IndexingStatus.RUNNING)
+            
             loader = self._create_loader(path)
             ids = self._process_file(loader)
+            
             if ids:
+                # Update status to COMPLETE if successful
+                self.status_tracker.update_file_status(
+                    path,
+                    IndexingStatus.COMPLETE
+                )
                 logger.info(f"Successfully indexed {path} with IDs: {ids}")
+            else:
+                # Update status to FAILED if no documents were processed
+                self.status_tracker.update_file_status(
+                    path,
+                    IndexingStatus.FAILED,
+                    "No documents were processed"
+                )
+                
         except Exception as e:
-            logger.error(f"Failed to index file {path}: {str(e)}")
+            error_msg = f"Failed to index file: {str(e)}"
+            logger.error(f"{error_msg} - {path}")
+            self.status_tracker.update_file_status(
+                path,
+                IndexingStatus.FAILED,
+                error_msg
+            )
 
     def find(self, query: str) -> Dict[str, any]:
         try:
