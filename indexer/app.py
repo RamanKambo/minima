@@ -1,12 +1,13 @@
 import os
 import logging
 import asyncio
-from indexer import Indexer
+from indexer import Indexer, Config
 from pydantic import BaseModel
 from async_queue import AsyncQueue
 from fastapi import FastAPI, APIRouter
 from contextlib import asynccontextmanager
 from typing import List
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,20 +49,28 @@ async def embedding(request: Query):
 
 async def crawl_loop(queue: AsyncQueue):
     """Continuously scan for files that need indexing"""
+    logger.info(f"Starting crawl loop with scan interval of {indexer.config.SCAN_INTERVAL_MINUTES} minutes")
+    
     while True:
         try:
+            scan_start_time = datetime.now()
+            logger.info(f"Starting periodic scan at {scan_start_time}")
+            
             # Get list of files that need indexing
             files_to_index = indexer.get_files_to_index()
             
             # Queue them for indexing
             for file_path in files_to_index:
                 await queue.put({
-                    "path": file_path
+                    "path": file_path,
+                    "scan_time": scan_start_time
                 })
                 logger.info(f"Queued file for indexing: {file_path}")
             
-            # Wait before next scan
-            await asyncio.sleep(300)  # 5 minutes
+            logger.info(f"Completed scan, found {len(files_to_index)} files to process")
+            
+            # Wait before next scan using configurable interval
+            await asyncio.sleep(indexer.config.SCAN_INTERVAL_SECONDS)
             
         except Exception as e:
             logger.error(f"Error in crawl loop: {e}")

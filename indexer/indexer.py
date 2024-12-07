@@ -52,6 +52,10 @@ class Config:
     EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID")
     EMBEDDING_SIZE = os.environ.get("EMBEDDING_SIZE")
     
+    # Scanning configuration
+    SCAN_INTERVAL_MINUTES = int(os.environ.get("SCAN_INTERVAL_MINUTES", 5))
+    SCAN_INTERVAL_SECONDS = SCAN_INTERVAL_MINUTES * 60
+    
     CHUNK_SIZE = 500
     CHUNK_OVERLAP = 200
 
@@ -144,6 +148,10 @@ class Indexer:
         try:
             # Update status to RUNNING
             self.status_tracker.update_file_status(path, IndexingStatus.RUNNING)
+            
+            # Log scan time if provided
+            if "scan_time" in message:
+                logger.info(f"File was queued during scan at: {message['scan_time']}")
             
             loader = self._create_loader(path)
             ids = self._process_file(loader)

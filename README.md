@@ -1,33 +1,125 @@
+# Minima
+
 **Minima** is an open source fully local RAG, with ability to integrate with ChatGPT and MCP. 
 Minima can also be used as a RAG on-premises.
 
-Minima supports 3 modes right now. You can use fully local (minimal) installation, you can use Custom GPT to query your local documents via ChatGPT and use an Anthropic Claude for for querying local files.
+Minima supports 3 modes right now. You can use fully local (minimal) installation, you can use Custom GPT to query your local documents via ChatGPT and use an Anthropic Claude for querying local files.
 
-**For MCP usage, please be sure that your local machines python is >=3.10 and 'uv' installed.**
+**For MCP usage, please be sure that your local machine's Python is >=3.10 and 'uv' installed.**
 
-1. Create a .env file in the project’s root directory (where you’ll find env.sample). Place .env in the same folder and copy all environment variables from env.sample to .env.
+## Quick Start
 
-2. Ensure your .env file includes the following variables:
-<ul>
-   <li> LOCAL_FILES_PATH </li>
-   <li> EMBEDDING_MODEL_ID </li>
-   <li> EMBEDDING_SIZE</li>
-   <li> START_INDEXING </li>
-<li> USER_ID </li> - required for ChatGPT integration, just use your email
-<li> PASSWORD </li> - required for ChatGPT integration, just use any password
-</ul>
+1. Create a `.env` file in the project's root directory (where you'll find env.sample). Place `.env` in the same folder and copy all environment variables from env.sample to `.env`.
 
-3. For fully local installation use: **docker compose -f docker-compose-ollama.yml --env-file .env up --build**.
+2. Ensure your `.env` file includes the following variables:
+- `LOCAL_FILES_PATH` - Path to your documents directory
+- `EMBEDDING_MODEL_ID` - Model to use for embeddings
+- `EMBEDDING_SIZE` - Size of embeddings
+- `SCAN_INTERVAL_MINUTES` - How often to scan for file changes (default: 5 minutes)
+- `USER_ID` - Required for ChatGPT integration, use your email
+- `PASSWORD` - Required for ChatGPT integration, use any password
 
-4. For ChatGPT enabled installation use: **docker compose -f docker-compose-chatgpt.yml --env-file .env up --build**.
+3. Choose your installation method:
+   - For fully local installation: `docker compose -f docker-compose-ollama.yml --env-file .env up --build`
+   - For ChatGPT enabled installation: `docker compose -f docker-compose-chatgpt.yml --env-file .env up --build`
+   - For MCP integration (Anthropic Desktop app): `docker compose -f docker-compose-mcp.yml --env-file .env up --build`
 
-5. For MCP integration (Anthropic Desktop app usage): **docker compose -f docker-compose-mcp.yml --env-file .env up --build**.
+## Indexing System
 
-6. In case of ChatGPT enabled installation copy OTP from terminal where you launched docker and use [Minima GPT](https://chatgpt.com/g/g-r1MNTSb0Q-minima-local-computer-search)  
+Minima implements a robust file indexing system that automatically manages the indexing process of your documents. Here's how it works:
 
-7. If you use Anthropic Claude, just add folliwing to **/Library/Application\ Support/Claude/claude_desktop_config.json**
+### Automatic File Tracking
 
+The system maintains a status file that tracks:
+- File metadata (name, extension, path)
+- Indexing status (Pending, Running, Complete, Failed, DeletedFromStore)
+- Last modified and indexed timestamps
+- Error information if indexing fails
+
+### How Indexing Works
+
+1. **Initial Setup**
+   - On first run, the system scans your `LOCAL_FILES_PATH` directory
+   - Creates a status tracking file if none exists
+   - Automatically begins indexing new files
+
+2. **Periodic Scanning**
+   - Configurable scan interval through `SCAN_INTERVAL_MINUTES` in .env file
+   - Default scan interval is 5 minutes if not specified
+   - Each scan checks for:
+     - New files to be indexed
+     - Modified files that need re-indexing
+     - Files that have been deleted
+   - Queue management ensures efficient processing
+   - Scan times are logged for tracking and debugging
+
+3. **Status Management**
+   - Files are marked as:
+     - "Pending" when first discovered or when modified
+     - "Running" while being indexed
+     - "Complete" after successful indexing
+     - "Failed" if errors occur during indexing
+     - "DeletedFromStore" if the file is removed
+
+4. **Smart Indexing**
+   - Only indexes new or modified files
+   - Automatically resumes failed indexing attempts
+   - Handles concurrent access safely
+   - Maintains indexing history through the status file
+
+## Configuration Variables
+
+**LOCAL_FILES_PATH**: Specify the root folder for indexing. Indexing is recursive, including all documents within subfolders.
+
+**EMBEDDING_MODEL_ID**: Specify the embedding model to use. Currently supports Sentence Transformer models (e.g., sentence-transformers/all-mpnet-base-v2).
+
+**EMBEDDING_SIZE**: Define the embedding dimension provided by the model for Qdrant vector storage configuration.
+
+**SCAN_INTERVAL_MINUTES**: How often the system should scan for file changes (in minutes). Default is 5 minutes if not specified. Examples:
+```env
+SCAN_INTERVAL_MINUTES=5  # Scan every 5 minutes (default)
+SCAN_INTERVAL_MINUTES=15 # Scan every 15 minutes
+SCAN_INTERVAL_MINUTES=60 # Scan every hour
 ```
+
+**USER_ID**: Your email (required for ChatGPT integration).
+
+**PASSWORD**: Authentication password for firebase account.
+
+## Example Configurations
+
+### Local or MCP Usage
+```env
+LOCAL_FILES_PATH=/Users/davidmayboroda/Downloads/PDFs/
+EMBEDDING_MODEL_ID=sentence-transformers/all-mpnet-base-v2
+EMBEDDING_SIZE=768
+SCAN_INTERVAL_MINUTES=5  # Scan every 5 minutes
+```
+
+### ChatGPT Custom GPT Usage
+```env
+LOCAL_FILES_PATH=/Users/davidmayboroda/Downloads/PDFs/
+EMBEDDING_MODEL_ID=sentence-transformers/all-mpnet-base-v2
+EMBEDDING_SIZE=768
+SCAN_INTERVAL_MINUTES=15  # Scan every 15 minutes
+USER_ID=user@gmail.com
+PASSWORD=yourpassword
+```
+
+## Models
+
+- Chat Model: **qwen2:0.5b** (default for local installation)
+- Rerank Model: **BAAI/bge-reranker-base** (used for both local and custom GPT configurations)
+
+## User Interface
+
+Access the chat UI at **http://localhost:3000**
+
+## MCP Integration
+
+To use with Anthropic Claude, add the following to `/Library/Application\ Support/Claude/claude_desktop_config.json`:
+
+```json
 {
     "mcpServers": {
       "minima": {
@@ -42,48 +134,18 @@ Minima supports 3 modes right now. You can use fully local (minimal) installatio
     }
   }
 ```
-   
-8. Ask anything, and you'll get answers based on local files in {LOCAL_FILES_PATH} folder.
 
-Explanation of Variables:
+## ChatGPT Integration
 
-**LOCAL_FILES_PATH**: Specify the root folder for indexing. Indexing is a recursive process, meaning all documents within subfolders of this root folder will also be indexed. Supported file types: .pdf, .xls, .docx, .txt, .md, .csv.
+For ChatGPT enabled installation:
+1. Start the service using the ChatGPT docker-compose file
+2. Copy the OTP from the terminal
+3. Use [Minima GPT](https://chatgpt.com/g/g-r1MNTSb0Q-minima-local-computer-search)
 
-**EMBEDDING_MODEL_ID**: Specify the embedding model to use. Currently, only Sentence Transformer models are supported. Testing has been done with sentence-transformers/all-mpnet-base-v2, but other Sentence Transformer models can be used.
+## Simplified Usage
 
-**EMBEDDING_SIZE**: Define the embedding dimension provided by the model, which is needed to configure Qdrant vector storage. Ensure this value matches the actual embedding size of the specified EMBEDDING_MODEL_ID.
+You can also run Minima using the provided `run.sh` script.
 
-**START_INDEXING**: Set this to ‘true’ on initial startup to begin indexing. Data can be queried while it indexes. Note that reindexing is not yet supported. To reindex, remove the qdrant_data folder (created automatically), set this flag to ‘true,’ and restart the containers. After indexing completes, you can keep the container running or restart without reindexing by setting this flag to ‘false’.
-
-**USER_ID**: Just use your email here, this is needed to authenticate custom GPT to search in your data.
-
-**PASSWORD**: Put any password here, this is used to create a firebase account for the email specified above.
-
-
-Example of .env file for fully local usage and MCP usage:
-```
-LOCAL_FILES_PATH=/Users/davidmayboroda/Downloads/PDFs/
-EMBEDDING_MODEL_ID=sentence-transformers/all-mpnet-base-v2
-EMBEDDING_SIZE=768
-START_INDEXING=false # true on the first run for indexing
-```
-
-Ollama chatting model - **qwen2:0.5b** (hard coded, but we will provide you with a model options in next updates)
-
-Rerank model - **BAAI/bge-reranker-base** (used for both configurations: fully local and custom GPT)
-
-To use a chat ui, please navigate to **http://localhost:3000**
-
-Example of .env file for ChatGPT custom GPT usage:
-```
-LOCAL_FILES_PATH=/Users/davidmayboroda/Downloads/PDFs/
-EMBEDDING_MODEL_ID=sentence-transformers/all-mpnet-base-v2
-EMBEDDING_SIZE=768
-START_INDEXING=false
-USER_ID=user@gmail.com # your real email
-PASSWORD=password # you can create here password that you want
-```
-
-Also, you can run minima using **run.sh**.
+## License
 
 Minima (https://github.com/dmayboroda/minima) is licensed under the Mozilla Public License v2.0 (MPLv2).
